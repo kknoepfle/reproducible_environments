@@ -1,28 +1,31 @@
 { pkgs, ...}:
 
 let
+  vars = if builtins.pathExists ./vars.nix then import ./vars.nix else import ../vars.nix;
   home-manager = builtins.fetchTarball "https://github.com/nix-community/home-manager/archive/release-23.05.tar.gz";
 in
 
-{ # Basic Configuration for the OS
-
+{ 
+/********************
+ * OS CONFIGURATION *
+ ********************/
   imports =
   [
     (import "${home-manager}/nixos")
   ];
 
-  boot.loader.timeout = 0; # disable bootloader menu
-
-  time.timeZone = "Europe/Berlin"; # set time zone
-  i18n.defaultLocale = "de_DE.UTF-8"; # set region
+ system.stateVersion = "23.05";
+  time.timeZone = vars.os.time_zone; # set time zone
+  i18n.defaultLocale = vars.os.locale; # set region
+  environment.etc.issue.text = builtins.readFile ./issue;
   console = {
       font = "Lat2-Terminus16";
-      keyMap = "de-latin1-nodeadkeys"; # set keyboard layout
+      keyMap = vars.os.key_map; # set keyboard layout
   };
 
   services.openssh = {
       enable = true; # enable ssh server
-      settings.PasswordAuthentication = true; # allow password login
+      settings.PasswordAuthentication = vars.os.ssh_password_authentication; # allow password login
       # settings.PermitRootLogin = "yes"; # allow root login
   };
 
@@ -60,31 +63,63 @@ in
 
   networking.firewall.enable = false; # disable firewall
 
-  environment.etc.issue = {
-    text = ''
-      <<< Welcome to NixOS (\m) - \l >>>
-
-      Run 'nixos-help' for the NixOS manual.
-
-      IP: \4{enp0s8}
-    '';
-  };
-
   programs.nix-ld.enable = true; # enable dynamic linking for remote development backends
   programs.java.enable = true; # enable java environment variables
   virtualisation.docker.enable = true; # install docker
 
-  environment.systemPackages = with pkgs; [ # install software packages
+  environment.systemPackages = with pkgs; builtins.concatLists[
+  [ # install software packages
     openssl
     keychain
     git
-    python3
-    fzf
-    jq
-    docker-compose
-    nodejs
-    jdk11
-    maven
+  ]
+  vars.os.additional_packages
   ];
+
+/**********************
+ * USER CONFIGURATION *
+ **********************/
+  users.users.${vars.user.name} = {
+    isNormalUser = true;
+    home = "/home/${vars.user.name}";
+    createHome = true;
+    extraGroups = [ "wheel" "networkmanager" "docker" "root" ];
+    openssh.authorizedKeys.keys = map (x: builtins.replaceStrings ["\n" "\r"] ["" ""] (builtins.readFile x)) vars.user.ssh.public_keys;
+    password = vars.user.password;
+  };
+
+  home-manager.users.${vars.user.name} = { lib, ... }: {
+    home.stateVersion = "23.05";
+
+    # configure git
+    programs.git = {
+      enable = true;
+      userName  = vars.user.git.username;
+      userEmail = vars.user.git.email;
+    };
+
+  };
+
+/*************************
+ * ENVIRONMENT VARIABLES *
+ *************************/
+  environment.variables = vars.os.environment_variables;
+
+/***************
+ * FILE SYSTEM *
+ ***************/
+
+  fileSystems."/" = {
+    device = "/dev/disk/by-label/nixos";
+    autoResize = true;
+    fsType = "ext4";
+  };
+
+  boot = {
+    growPartition = true;
+    kernelParams = ["console=ttyS0"];
+    loader.grub.device = "/dev/vda";
+    loader.timeout = 0;
+  };
 
 }
